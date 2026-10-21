@@ -4,7 +4,12 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from app import db
+
 ROBOT_PATH = Path(__file__).resolve().parent.parent / "robot" / "robot.py"
+
+
+
 
 
 class RobotAlreadyRunning(Exception):
@@ -15,9 +20,12 @@ class RobotNotRunning(Exception):
     pass
 
 
+
+
 class RobotManager:
     def __init__(self) -> None:
         self._process: subprocess.Popen | None = None
+        self._watcher: threading.Thread | None = None
         self._started_at: datetime | None = None
         self._start_number: int | None = None
         self._lock = threading.Lock()
@@ -38,17 +46,24 @@ class RobotManager:
             self._started_at = datetime.now()
             self._start_number = start_number
 
+            run_id = db.create_run(start_number, self._started_at)
+            self._watcher = threading.Thread(
+                target=self._watch,
+                args=(self._process, run_id, self._started_at),
+                daemon=True,
+            )
+            self._watcher.start()
+
     def stop(self) -> None:
         with self._lock:
             if not self.is_running():
                 raise RobotNotRunning
 
             self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+            self._watcher.join(timeout=5)
+            if self._watcher.is_alive():
                 self._process.kill()
-                self._process.wait()
+                self._watcher.join()
             self._process = None
 
     def status(self) -> dict:
@@ -60,3 +75,9 @@ class RobotManager:
             "start_number": self._start_number,
             "started_at": self._started_at,
         }
+
+    @staticmethod
+    def _watch(process: subprocess.Popen, run_id: int, started_at: datetime) -> None:
+        process.wait()
+        finished_at = datetime.now()
+        db.finish_run(run_id, finished_at, (finished_at - started_at).total_seconds())

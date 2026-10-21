@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from app import db
 from app.robot_manager import RobotAlreadyRunning, RobotManager, RobotNotRunning
 
 robot = RobotManager()
@@ -11,6 +12,7 @@ robot = RobotManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    db.init_db()
     yield
     with suppress(RobotNotRunning):
         robot.stop()
@@ -28,6 +30,14 @@ class RobotStatus(BaseModel):
     pid: int | None = None
     start_number: int | None = None
     started_at: datetime | None = None
+
+
+class Run(BaseModel):
+    id: int
+    start_number: int
+    started_at: datetime
+    finished_at: datetime | None
+    duration_seconds: float | None
 
 
 @app.post("/robot/start", response_model=RobotStatus)
@@ -52,3 +62,8 @@ def stop_robot():
 @app.get("/robot/status", response_model=RobotStatus)
 def get_status():
     return robot.status()
+
+
+@app.get("/robot/runs", response_model=list[Run])
+def get_runs():
+    return db.get_runs()
